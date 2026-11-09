@@ -61,7 +61,7 @@
   button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   #music { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
   #music iframe { display: block; width: 200px; height: 200px; border: 0; border-radius: 6px; background: #000; }
-  #muteBtn { padding: 8px 10px; font-size: 12px; background: var(--panel); color: var(--ink); border-color: rgba(255,255,255,0.22); flex: none; }
+  #muteBtn, #sfxBtn { padding: 8px 10px; font-size: 12px; background: var(--panel); color: var(--ink); border-color: rgba(255,255,255,0.22); flex: none; }
   #flash { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); font-family: var(--font-display); font-size: clamp(18px, 4vw, 28px); pointer-events: none; opacity: 0; transition: opacity 300ms; text-shadow: 0 2px 12px rgba(0,0,0,0.6); white-space: nowrap; }
 </style>
 
@@ -76,7 +76,7 @@
 </div>
 <div id="flash"></div>
 
-<div id="music" aria-label="Soundtrack: Slurp It Up by The Yellow River Boys"><div id="ytPlayer"></div><button id="muteBtn" type="button">Mute music</button></div>
+<div id="music" aria-label="Soundtrack: Hot Piss by the Yellow River Boys"><div id="ytPlayer"></div><button id="muteBtn" type="button">Mute music</button><button id="sfxBtn" type="button">Mute sound effects</button></div>
 
 <div class="modal" id="startModal">
   <div class="card">
@@ -111,8 +111,8 @@
   var ytPlayer = null, ytReady = false, ytWantPlay = false;
   function onYouTubeIframeAPIReady() {
     ytPlayer = new YT.Player('ytPlayer', {
-      width: 200, height: 200, videoId: '_JxWOCUon3M',
-      playerVars: { loop: 1, playlist: '_JxWOCUon3M', playsinline: 1, rel: 0, modestbranding: 1 },
+      width: 200, height: 200, videoId: '1tYvGfF1Gkg',
+      playerVars: { loop: 1, playlist: '1tYvGfF1Gkg', playsinline: 1, rel: 0, modestbranding: 1 },
       events: { onReady: function () { ytReady = true; if (ytWantPlay) ytPlayer.playVideo(); } }
     });
   }
@@ -362,9 +362,9 @@
   window.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); if (S.playing) S.holding = true; } });
   window.addEventListener('keyup', e => { if (e.code === 'Space') S.holding = false; });
 
-  $('startBtn').addEventListener('click', () => { $('startModal').hidden = true; S.playing = true; resetRound(); });
-  $('nextBtn').addEventListener('click', () => { $('endModal').hidden = true; S.round++; resetRound(); S.playing = true; });
-  $('retryBtn').addEventListener('click', () => { $('endModal').hidden = true; resetRound(); S.playing = true; });
+  $('startBtn').addEventListener('click', () => { $('startModal').hidden = true; S.playing = true; resetRound(); initAudio(); zipper(); });
+  $('nextBtn').addEventListener('click', () => { $('endModal').hidden = true; S.round++; resetRound(); S.playing = true; initAudio(); zipper(); });
+  $('retryBtn').addEventListener('click', () => { $('endModal').hidden = true; resetRound(); S.playing = true; initAudio(); zipper(); });
 
   // ---------- HUD ----------
   let flashTimer = 0;
@@ -380,6 +380,7 @@
   }
   function finish() {
     S.playing = false; S.finished = true; S.holding = false;
+    flushSound();
     const a = accuracy() || 0, pct = Math.round(a * 100);
     const key = 'r' + Math.min(S.round, 4);
     if (!best[key] || pct > best[key]) { best[key] = pct; try { localStorage.setItem('steady-stream-best', JSON.stringify(best)); } catch (e) {} }
@@ -395,6 +396,81 @@
     $('endModal').hidden = false;
     setTimeout(() => $('nextBtn').focus(), 50);
   }
+
+  // ---------- sound effects (synthesized with Web Audio, no files) ----------
+  const SFX = { ctx: null, on: true };
+  function noiseBuffer(ctx, secs, brown) {
+    const b = ctx.createBuffer(1, Math.floor(ctx.sampleRate * secs), ctx.sampleRate), d = b.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; } else d[i] = w; }
+    return b;
+  }
+  function initAudio() {
+    if (SFX.ctx) { SFX.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    const ctx = new AC(); SFX.ctx = ctx;
+    SFX.master = ctx.createGain(); SFX.master.gain.value = SFX.on ? 0.7 : 0; SFX.master.connect(ctx.destination);
+    SFX.white = noiseBuffer(ctx, 2, false); SFX.brown = noiseBuffer(ctx, 4, true);
+    const loopNoise = (buf, type, freq, q) => {
+      const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true;
+      const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+      const g = ctx.createGain(); g.gain.value = 0;
+      s.connect(f); f.connect(g); g.connect(SFX.master); s.start(); return { f, g };
+    };
+    SFX.tinkle = loopNoise(SFX.white, 'bandpass', 2200, 1.2);   // stream hitting bowl water
+    SFX.splat = loopNoise(SFX.white, 'lowpass', 700, 0.7);      // stream hitting tile, seat, mat
+    SFX.fan = loopNoise(SFX.brown, 'lowpass', 260, 0.5); SFX.fan.g.gain.value = 0.18; // exhaust fan
+    const hum = ctx.createOscillator(); hum.frequency.value = 118;
+    const hg = ctx.createGain(); hg.gain.value = 0.012; hum.connect(hg); hg.connect(SFX.master); hum.start();
+  }
+  function burst(t, dur, freq, type, gain, q) {
+    const ctx = SFX.ctx; const s = ctx.createBufferSource(); s.buffer = SFX.white;
+    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q || 1;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(SFX.master); s.start(t, Math.random()); s.stop(t + dur + 0.02);
+  }
+  function plink(t, freq, gain) {
+    const ctx = SFX.ctx; const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 1.8, t + 0.06);
+    const g = ctx.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    o.connect(g); g.connect(SFX.master); o.start(t); o.stop(t + 0.1);
+  }
+  function zipper() {
+    if (!SFX.ctx) return; const t0 = SFX.ctx.currentTime + 0.05;
+    for (let k = 0; k < 22; k++) burst(t0 + k * 0.016 + Math.random() * 0.004, 0.012, 3500 + Math.random() * 1500, 'highpass', 0.35, 0.7);
+  }
+  function flushSound() {
+    if (!SFX.ctx) return; const ctx = SFX.ctx, t = ctx.currentTime + 0.25;
+    burst(t, 0.08, 400, 'bandpass', 0.6, 3); // handle clunk
+    const s = ctx.createBufferSource(); s.buffer = SFX.white; s.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 2;
+    f.frequency.setValueAtTime(500, t); f.frequency.linearRampToValueAtTime(2200, t + 0.6); f.frequency.linearRampToValueAtTime(900, t + 2.2); f.frequency.linearRampToValueAtTime(300, t + 3.2);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.55, t + 0.4); g.gain.setValueAtTime(0.55, t + 1.6); g.gain.exponentialRampToValueAtTime(0.0001, t + 3.4);
+    s.connect(f); f.connect(g); g.connect(SFX.master); s.start(t); s.stop(t + 3.5);
+    for (let k = 0; k < 14; k++) plink(t + 1.4 + k * 0.12 + Math.random() * 0.06, 180 + Math.random() * 220, 0.18); // gurgles
+    const r = ctx.createBufferSource(); r.buffer = SFX.white; r.loop = true; // tank refill hiss
+    const rf = ctx.createBiquadFilter(); rf.type = 'bandpass'; rf.frequency.value = 4200; rf.Q.value = 0.8;
+    const rg = ctx.createGain(); rg.gain.setValueAtTime(0, t + 2.6); rg.gain.linearRampToValueAtTime(0.06, t + 3.2); rg.gain.setValueAtTime(0.06, t + 5.5); rg.gain.linearRampToValueAtTime(0, t + 6.5);
+    r.connect(rf); rf.connect(rg); rg.connect(SFX.master); r.start(t + 2.6); r.stop(t + 6.6);
+  }
+  let prevBowl = 0, prevMess = 0, bowlRate = 0, messRate = 0;
+  function updateAudio(dt) {
+    if (!SFX.ctx) return;
+    const db = Math.max(0, S.bowl - prevBowl), dm = Math.max(0, S.mess - prevMess); prevBowl = S.bowl; prevMess = S.mess;
+    bowlRate += (db / Math.max(dt, 1e-3) - bowlRate) * Math.min(1, dt * 12);
+    messRate += (dm / Math.max(dt, 1e-3) - messRate) * Math.min(1, dt * 12);
+    const now = SFX.ctx.currentTime, b = Math.min(1, bowlRate / 700), m = Math.min(1, messRate / 700);
+    SFX.tinkle.g.gain.setTargetAtTime(0.5 * b, now, 0.03);
+    SFX.tinkle.f.frequency.setTargetAtTime(1600 + 1400 * b, now, 0.05);
+    SFX.splat.g.gain.setTargetAtTime(0.6 * m, now, 0.03);
+    if (Math.random() < b * dt * 30) plink(now + Math.random() * 0.02, 700 + Math.random() * 900, 0.05 + Math.random() * 0.05);
+  }
+  $('sfxBtn').addEventListener('click', () => {
+    SFX.on = !SFX.on;
+    if (SFX.master) SFX.master.gain.setTargetAtTime(SFX.on ? 0.7 : 0, SFX.ctx.currentTime, 0.05);
+    $('sfxBtn').textContent = SFX.on ? 'Mute sound effects' : 'Unmute sound effects';
+    $('sfxBtn').blur();
+  });
 
   // ---------- simulation ----------
   const G = 9.8;
@@ -545,6 +621,7 @@
   function loop(now) {
     const dt = Math.min(0.033, (now - last) / 1000); last = now;
     const rate = step(dt);
+    updateAudio(dt);
     if (now - lastHud > 80) { updateHud(rate); lastHud = now; }
     render(dt, rate);
     requestAnimationFrame(loop);
