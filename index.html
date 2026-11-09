@@ -262,19 +262,34 @@
     }
   }
 
-  // puddles
-  const puddles = [];
-  const puddleGeo = new THREE.CircleGeometry(1, 24);
+  // puddles: stay on the floor for the whole round (instanced, never recycled)
+  const MAX_PUDDLES = 1500;
   const puddleMat = new THREE.MeshStandardMaterial({ color: 0xe9c444, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+  const puddleMesh = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 24), puddleMat, MAX_PUDDLES);
+  puddleMesh.count = 0; puddleMesh.frustumCulled = false; scene.add(puddleMesh);
+  const puddles = []; // { x, y, z, r: target radius, cur: drawn radius }
+  const _pm = new THREE.Matrix4(), _pq = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)), _pp = new THREE.Vector3(), _ps = new THREE.Vector3();
   function addPuddle(x, z, amt) {
+    let nearest = null, nd = Infinity;
     for (const p of puddles) {
-      const dx = p.position.x - x, dz = p.position.z - z;
-      if (dx * dx + dz * dz < (p.scale.x * 0.9) ** 2) { p.userData.r = Math.min(0.22, p.userData.r + amt * 0.4); return; }
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d < Math.max(p.r, 0.02) * 0.9) { p.r = Math.min(0.22, p.r + amt * 0.4); return; } // merge into an existing puddle
+      if (d < nd) { nd = d; nearest = p; }
     }
-    let m;
-    if (puddles.length >= 70) { m = puddles.shift(); } else { m = new THREE.Mesh(puddleGeo, puddleMat); m.rotation.x = -Math.PI / 2; scene.add(m); }
-    m.position.set(x, 0.006 + Math.random() * 0.001, z); m.userData.r = 0.012 + amt; m.scale.setScalar(0.005);
-    puddles.push(m);
+    if (puddles.length >= MAX_PUDDLES) { nearest.r = Math.min(0.22, nearest.r + amt * 0.4); return; } // full: grow, never delete
+    puddles.push({ x, y: 0.006 + Math.random() * 0.001, z, r: 0.012 + amt, cur: 0.005, drawn: false });
+    puddleMesh.count = puddles.length;
+  }
+  function drawPuddles(dt) {
+    let dirty = false;
+    for (let i = 0; i < puddles.length; i++) {
+      const p = puddles[i];
+      if (p.drawn && Math.abs(p.r - p.cur) < 0.0003) continue;
+      p.cur += (p.r - p.cur) * Math.min(1, dt * 6);
+      _pp.set(p.x, p.y, p.z); _ps.set(p.cur, p.cur, p.cur); _pm.compose(_pp, _pq, _ps);
+      puddleMesh.setMatrixAt(i, _pm); p.drawn = true; dirty = true;
+    }
+    if (dirty) puddleMesh.instanceMatrix.needsUpdate = true;
   }
 
   // ripples
@@ -312,7 +327,7 @@
     S.cfg = roundCfg(S.round);
     S.flow = 0; S.bladder = BLADDER_ML; S.bowl = 0; S.mess = 0; S.bowlMl = 0; S.t = 0; S.doneTimer = 0; S.finished = false; S.holding = false;
     for (let i = 0; i < N; i++) { P.t[i] = 0; pos[i * 3 + 1] = -50; }
-    for (const p of puddles) scene.remove(p); puddles.length = 0;
+    puddles.length = 0; puddleMesh.count = 0;
     toilet.position.set(S.cfg.tx, 0, -0.85);
     waterMat.color.set(0x9fc6d2);
     bulb.intensity = S.cfg.light; bulb.color.set(S.cfg.tint || 0xfff0d8);
@@ -636,7 +651,7 @@
     }
     pGeo.attributes.position.needsUpdate = true;
 
-    for (const p of puddles) { const r = p.userData.r; p.scale.x += (r - p.scale.x) * Math.min(1, dt * 6); p.scale.y = p.scale.z = p.scale.x; }
+    drawPuddles(dt);
     for (const rp of ripples) {
       if (rp.age >= 1) { rp.m.visible = false; continue; }
       rp.age += dt * 1.6; const s = 0.01 + rp.age * 0.07; rp.m.scale.set(s, s * ZS, s); rp.m.material.opacity = 0.5 * (1 - rp.age);
