@@ -59,6 +59,9 @@
   button.primary { background: var(--accent); color: #1b1606; }
   button.ghost { background: transparent; color: var(--ink); border-color: rgba(255,255,255,0.22); }
   button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  #music { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
+  #music iframe { display: block; width: 200px; height: 200px; border: 0; border-radius: 6px; background: #000; }
+  #muteBtn { padding: 8px 10px; font-size: 12px; background: var(--panel); color: var(--ink); border-color: rgba(255,255,255,0.22); flex: none; }
   #flash { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); font-family: var(--font-display); font-size: clamp(18px, 4vw, 28px); pointer-events: none; opacity: 0; transition: opacity 300ms; text-shadow: 0 2px 12px rgba(0,0,0,0.6); white-space: nowrap; }
 </style>
 
@@ -72,6 +75,8 @@
   <div id="hint">Hold click or Space to go · move the mouse to aim</div>
 </div>
 <div id="flash"></div>
+
+<div id="music" aria-label="Soundtrack: Slurp It Up by The Yellow River Boys"><div id="ytPlayer"></div><button id="muteBtn" type="button">Mute music</button></div>
 
 <div class="modal" id="startModal">
   <div class="card">
@@ -101,6 +106,31 @@
   </div>
 </div>
 
+<script>
+  // Soundtrack via YouTube's embedded player: starts on "Step up", loops, mutable.
+  var ytPlayer = null, ytReady = false, ytWantPlay = false;
+  function onYouTubeIframeAPIReady() {
+    ytPlayer = new YT.Player('ytPlayer', {
+      width: 200, height: 200, videoId: '_JxWOCUon3M',
+      playerVars: { loop: 1, playlist: '_JxWOCUon3M', playsinline: 1, rel: 0, modestbranding: 1 },
+      events: { onReady: function () { ytReady = true; if (ytWantPlay) ytPlayer.playVideo(); } }
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('startBtn').addEventListener('click', function () {
+      ytWantPlay = true;
+      if (ytReady) ytPlayer.playVideo();
+    });
+    var mute = document.getElementById('muteBtn');
+    mute.addEventListener('click', function () {
+      if (!ytReady) return;
+      if (ytPlayer.isMuted()) { ytPlayer.unMute(); mute.textContent = 'Mute music'; }
+      else { ytPlayer.mute(); mute.textContent = 'Unmute music'; }
+      mute.blur();
+    });
+  });
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
