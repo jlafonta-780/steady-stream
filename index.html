@@ -59,8 +59,7 @@
   button.primary { background: var(--accent); color: #1b1606; }
   button.ghost { background: transparent; color: var(--ink); border-color: rgba(255,255,255,0.22); }
   button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  #music { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
-  #music iframe { display: block; width: 200px; height: 200px; border: 0; border-radius: 6px; background: #000; }
+  #audioCtl { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 6px; }
   #muteBtn, #sfxBtn { padding: 8px 10px; font-size: 12px; background: var(--panel); color: var(--ink); border-color: rgba(255,255,255,0.22); flex: none; }
   #flash { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); font-family: var(--font-display); font-size: clamp(18px, 4vw, 28px); pointer-events: none; opacity: 0; transition: opacity 300ms; text-shadow: 0 2px 12px rgba(0,0,0,0.6); white-space: nowrap; }
 </style>
@@ -76,7 +75,7 @@
 </div>
 <div id="flash"></div>
 
-<div id="music" aria-label="Soundtrack: Hot Piss by the Yellow River Boys"><div id="ytPlayer"></div><button id="muteBtn" type="button">Mute music</button><button id="sfxBtn" type="button">Mute sound effects</button></div>
+<div id="audioCtl"><button id="muteBtn" type="button">Mute music</button><button id="sfxBtn" type="button">Mute sound effects</button></div>
 
 <div class="modal" id="startModal">
   <div class="card">
@@ -106,31 +105,6 @@
   </div>
 </div>
 
-<script>
-  // Soundtrack via YouTube's embedded player: starts on "Step up", loops, mutable.
-  var ytPlayer = null, ytReady = false, ytWantPlay = false;
-  function onYouTubeIframeAPIReady() {
-    ytPlayer = new YT.Player('ytPlayer', {
-      width: 200, height: 200, videoId: '1tYvGfF1Gkg',
-      playerVars: { loop: 1, playlist: '1tYvGfF1Gkg', playsinline: 1, rel: 0, modestbranding: 1 },
-      events: { onReady: function () { ytReady = true; if (ytWantPlay) ytPlayer.playVideo(); } }
-    });
-  }
-  document.addEventListener('DOMContentLoaded', function () {
-    document.getElementById('startBtn').addEventListener('click', function () {
-      ytWantPlay = true;
-      if (ytReady) ytPlayer.playVideo();
-    });
-    var mute = document.getElementById('muteBtn');
-    mute.addEventListener('click', function () {
-      if (!ytReady) return;
-      if (ytPlayer.isMuted()) { ytPlayer.unMute(); mute.textContent = 'Mute music'; }
-      else { ytPlayer.mute(); mute.textContent = 'Unmute music'; }
-      mute.blur();
-    });
-  });
-</script>
-<script src="https://www.youtube.com/iframe_api"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
@@ -456,6 +430,7 @@
   let prevBowl = 0, prevMess = 0, bowlRate = 0, messRate = 0;
   function updateAudio(dt) {
     if (!SFX.ctx) return;
+    if (!MUSIC.started) startMusic();
     const db = Math.max(0, S.bowl - prevBowl), dm = Math.max(0, S.mess - prevMess); prevBowl = S.bowl; prevMess = S.mess;
     bowlRate += (db / Math.max(dt, 1e-3) - bowlRate) * Math.min(1, dt * 12);
     messRate += (dm / Math.max(dt, 1e-3) - messRate) * Math.min(1, dt * 12);
@@ -465,6 +440,77 @@
     SFX.splat.g.gain.setTargetAtTime(0.6 * m, now, 0.03);
     if (Math.random() < b * dt * 30) plink(now + Math.random() * 0.02, 700 + Math.random() * 900, 0.05 + Math.random() * 0.05);
   }
+  // ---------- soundtrack: "Porcelain Shuffle", an original 12-bar shuffle blues in A, synthesized ----------
+  const MUSIC = { on: true, started: false, bpm: 92, bar: 0, chorus: 0, next: 0, timer: null, bus: null };
+  const PROG = [45, 45, 45, 45, 50, 50, 45, 45, 40, 50, 45, 40]; // A A A A | D D A A | E D A E (bass roots, MIDI)
+  const LEAD = [ // [bar, swung eighth 0-7, MIDI note, length in eighths]
+    [0,1,76,1],[0,2,79,1],[0,3,81,2],[0,6,79,1],[0,7,76,1],[1,0,74,2],[1,2,72,1],[1,3,69,3],
+    [2,4,72,1],[2,5,69,1],[2,6,67,2],[3,0,69,4],
+    [4,1,74,1],[4,2,77,1],[4,3,78,2],[4,6,77,1],[4,7,74,1],[5,0,72,2],[5,2,69,4],
+    [6,3,76,1],[6,4,81,2],[6,6,79,1],[6,7,76,1],[7,0,72,1],[7,1,69,3],
+    [8,0,76,2],[8,2,80,1],[8,3,83,2],[8,6,81,1],[8,7,79,1],[9,0,78,2],[9,2,76,1],[9,3,74,1],[9,4,72,2],[9,6,69,2],
+    [10,0,81,1],[10,1,80,1],[10,2,79,1],[10,3,78,1],[10,4,77,2],[11,0,76,4]
+  ];
+  const hz = m => 440 * Math.pow(2, (m - 69) / 12);
+  function eighthTime(barStart, k) { const beat = 60 / MUSIC.bpm; return barStart + ((k >> 1) + (k & 1 ? 2 / 3 : 0)) * beat; }
+  function tone(t, freq, dur, type, gain, cutoff, vib) {
+    const ctx = SFX.ctx; const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (vib) { const lfo = ctx.createOscillator(); lfo.frequency.value = 5.5; const lg = ctx.createGain(); lg.gain.value = vib; lfo.connect(lg); lg.connect(o.detune); lfo.start(t); lfo.stop(t + dur + 0.3); }
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cutoff;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.015); g.gain.setTargetAtTime(gain * 0.6, t + 0.03, dur * 0.4); g.gain.setTargetAtTime(0, t + dur, 0.04);
+    o.connect(f); f.connect(g); g.connect(MUSIC.bus); o.start(t); o.stop(t + dur + 0.3);
+  }
+  function drum(t, kind) {
+    const ctx = SFX.ctx;
+    if (kind === 'kick') {
+      const o = ctx.createOscillator(); o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      o.connect(g); g.connect(MUSIC.bus); o.start(t); o.stop(t + 0.3); return;
+    }
+    const s = ctx.createBufferSource(); s.buffer = SFX.white;
+    const f = ctx.createBiquadFilter(); const g = ctx.createGain();
+    if (kind === 'snare') { f.type = 'bandpass'; f.frequency.value = 1800; f.Q.value = 0.8; g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.16); }
+    else { f.type = 'highpass'; f.frequency.value = 7000; g.gain.setValueAtTime(kind === 'hatA' ? 0.16 : 0.09, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04); }
+    s.connect(f); f.connect(g); g.connect(MUSIC.bus); s.start(t, Math.random()); s.stop(t + 0.2);
+  }
+  function scheduleBar(i, t0) {
+    const beat = 60 / MUSIC.bpm, root = PROG[i];
+    const boogie = [0, 4, 7, 9, 10, 9, 7, 4];
+    for (let k = 0; k < 8; k++) {
+      const t = eighthTime(t0, k);
+      tone(t, hz(root + boogie[k]), beat * 0.45, 'sawtooth', 0.22, 600);             // boogie bass
+      drum(t, k & 1 ? 'hatB' : 'hatA');
+      if (k === 0 || k === 4) drum(t, 'kick');
+      if (k === 2 || k === 6) drum(t, 'snare');
+      if (k === 3 || k === 7) [4, 10, 14].forEach(n => tone(t, hz(root + 12 + n), beat * 0.3, 'square', 0.035, 1400)); // chord stabs
+    }
+    if (MUSIC.chorus > 0) { // first chorus is just the band, then the harmonica comes in
+      const shift = MUSIC.chorus % 3 === 2 ? -12 : 0;
+      for (const [b, k, m, len] of LEAD) if (b === i && Math.random() < 0.9) tone(eighthTime(t0, k), hz(m + shift), len * beat * 0.5, 'square', 0.07, 2200, 14);
+    }
+  }
+  function startMusic() {
+    if (MUSIC.started || !SFX.ctx) return; MUSIC.started = true;
+    const ctx = SFX.ctx;
+    MUSIC.bus = ctx.createGain(); MUSIC.bus.gain.value = MUSIC.on ? 0.32 : 0; MUSIC.bus.connect(ctx.destination);
+    MUSIC.next = ctx.currentTime + 0.4;
+    MUSIC.timer = setInterval(() => {
+      if (ctx.state !== 'running') return;
+      if (MUSIC.next < ctx.currentTime) MUSIC.next = ctx.currentTime + 0.05;
+      while (MUSIC.next < ctx.currentTime + 0.6) {
+        scheduleBar(MUSIC.bar, MUSIC.next);
+        MUSIC.next += 4 * 60 / MUSIC.bpm;
+        MUSIC.bar = (MUSIC.bar + 1) % 12; if (MUSIC.bar === 0) MUSIC.chorus++;
+      }
+    }, 50);
+  }
+  $('muteBtn').addEventListener('click', () => {
+    MUSIC.on = !MUSIC.on;
+    if (MUSIC.bus) MUSIC.bus.gain.setTargetAtTime(MUSIC.on ? 0.32 : 0, SFX.ctx.currentTime, 0.05);
+    $('muteBtn').textContent = MUSIC.on ? 'Mute music' : 'Unmute music';
+    $('muteBtn').blur();
+  });
+  document.addEventListener('visibilitychange', () => { if (!SFX.ctx) return; if (document.hidden) SFX.ctx.suspend(); else SFX.ctx.resume(); });
   $('sfxBtn').addEventListener('click', () => {
     SFX.on = !SFX.on;
     if (SFX.master) SFX.master.gain.setTargetAtTime(SFX.on ? 0.7 : 0, SFX.ctx.currentTime, 0.05);
